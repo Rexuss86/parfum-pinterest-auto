@@ -1,0 +1,41 @@
+[
+  {
+    "id": "test001",
+    "name": "[MO] MONTALE OUD AMBRIOR парфюмерная вода (унисекс) 100ml",
+    "brand": "MONTALE",
+    "price": 8500,
+    "volume": "100ml",
+    "gender": "унисекс",
+    "image_url": "https://dnkparfum.ru/upload/iblock/abc/montale-test.jpg",
+    "product_url": "https://dnkparfum.ru/product/montale-oud-ambrior",
+    "description": "MONTALE OUD AMBRIOR - 8500 ₽ | Стойкий восточный аромат с нотами уда",
+    "parsed_at": "2026-03-13T12:00:00",
+    "pinterest_ready": false
+  },
+  {
+    "id": "test002",
+    "name": "[XJ] XERJOFF CASAMORATI 1888 Mefisto (мужские) 100ml",
+    "brand": "XERJOFF",
+    "price": 12900,
+    "volume": "100ml",
+    "gender": "мужские",
+    "image_url": "https://dnkparfum.ru/upload/iblock/def/xerjoff-test.jpg",
+    "product_url": "https://dnkparfum.ru/product/xerjoff-mefisto",
+    "description": "XERJOFF Mefisto - 12900 ₽ | Нишевая итальянская парфюмерия",
+    "parsed_at": "2026-03-13T12:01:00",
+    "pinterest_ready": false
+  },
+  {
+    "id": "test003",
+    "name": "[VO] AJMAL AMBER WOOD парфюмерная вода (восточные) 75ml",
+    "brand": "AJMAL",
+    "price": 4977,
+    "volume": "75ml",
+    "gender": "унисекс",
+    "image_url": "https://dnkparfum.ru/upload/iblock/ghi/ajmal-test.jpg",
+    "product_url": "https://dnkparfum.ru/product/ajmal-amber-wood",
+    "description": "AJMAL AMBER WOOD - 4977 ₽ | Восточный аромат с янтарём и древесиной",
+    "parsed_at": "2026-03-13T12:02:00",
+    "pinterest_ready": false
+  }
+]
