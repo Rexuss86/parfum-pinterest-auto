@@ -12,8 +12,9 @@ venv/
 data/products.json
 data/published.json
 
-# RSS (генерируется автоматически)
-rss/feed.xml
+# RSS: разрешаем коммитить feed.xml, но игнорируем остальное
+rss/*
+!rss/feed.xml
 
 # IDE
 .vscode/
