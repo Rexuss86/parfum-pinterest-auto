@@ -1,10 +1,13 @@
 name: Auto Publish Parfum to Pinterest
 
+# 🔑 ДОБАВЛЕНО: Права на запись в репозиторий
+permissions:
+  contents: write
+
 on:
   schedule:
-    # Запуск каждый день в 09:00 UTC
     - cron: '0 9 * * *'
-  workflow_dispatch:  # Ручной запуск
+  workflow_dispatch:
 
 jobs:
   parse-and-publish:
@@ -13,6 +16,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}  # 🔑 Явное указание токена
     
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -54,4 +59,4 @@ jobs:
         git add rss/feed.xml
         git commit -m "Update RSS feed $(date +%Y-%m-%d)" || echo "No changes to commit"
         git push
-      continue-on-error: true
+      continue-on-error: true  # 🔑 Не блокировать весь воркфлоу, если пуш не удался
