@@ -1,0 +1,57 @@
+name: Auto Publish Parfum to Pinterest
+
+on:
+  schedule:
+    # Запуск каждый день в 09:00 UTC
+    - cron: '0 9 * * *'
+  workflow_dispatch:  # Ручной запуск
+
+jobs:
+  parse-and-publish:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r parser/requirements.txt
+        pip install feedparser requests
+    
+    - name: Run parser
+      env:
+        SELENIUM_HEADLESS: true
+      run: |
+        python parser/main.py --pages 1 --output data/products.json
+      continue-on-error: true
+    
+    - name: Generate RSS
+      env:
+        BOARD_MONTALE: ${{ secrets.BOARD_MONTALE }}
+        BOARD_NISHEVAYA: ${{ secrets.BOARD_NISHEVAYA }}
+        BOARD_STOYKIE: ${{ secrets.BOARD_STOYKIE }}
+        BOARD_VOSTOCHNIE: ${{ secrets.BOARD_VOSTOCHNIE }}
+        BOARD_XERJOFF: ${{ secrets.BOARD_XERJOFF }}
+        BOARD_ZIMNIE: ${{ secrets.BOARD_ZIMNIE }}
+        TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
+      run: |
+        python rss_generator.py \
+          --input data/products.json \
+          --output rss/feed.xml \
+          --title "Parfum Pinterest Feed" \
+          --telegram "${{ secrets.TELEGRAM_CHANNEL }}"
+    
+    - name: Commit and push RSS
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add rss/feed.xml
+        git commit -m "Update RSS feed $(date +%Y-%m-%d)" || echo "No changes to commit"
+        git push
+      continue-on-error: true
