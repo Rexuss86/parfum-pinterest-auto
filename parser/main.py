@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Парсер DNK Parfum → JSON данные для RSS
+Парсер DNK Parfum — обновлённая версия с универсальными селекторами
 """
 
 import time
@@ -13,7 +13,9 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import hashlib
 
 BASE_URL = "https://dnkparfum.ru"
@@ -21,13 +23,13 @@ OUTPUT_DIR = Path("data")
 
 
 def get_driver():
-    """Headless Chrome driver."""
+    """Headless Chrome driver с улучшенной маскировкой."""
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=options)
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -37,39 +39,63 @@ def get_driver():
 def parse_product_card(card_element, base_url=BASE_URL):
     """Извлечение данных из карточки товара."""
     try:
-        title_elem = card_element.find_element(By.CSS_SELECTOR, "a.product-title, .product-name, .title, a[href*='/product/']")
-        name = title_elem.text.strip()
-        product_url = title_elem.get_attribute("href")
+        # Название и ссылка (универсальный поиск)
+        title_elem = None
+        for selector in [
+            "a.product-title", ".product-name a", ".title a", 
+            "a[href*='/product/']", "a[href*='/catalog/']"
+        ]:
+            try:
+                title_elem = card_element.find_element(By.CSS_SELECTOR, selector)
+                if title_elem:
+                    break
+            except:
+                continue
         
-        if not product_url:
+        if not title_elem:
+            # Фоллбэк: ищем любой текст, похожий на название
+            name = card_element.text.strip().split('\n')[0][:100]
+            product_url = None
+        else:
+            name = title_elem.text.strip() or title_elem.get_attribute("title") or "Без названия"
+            product_url = title_elem.get_attribute("href")
+        
+        if not name or len(name) < 3:
             return None
         
+        # Цена
         price = None
-        try:
-            price_elem = card_element.find_element(By.CSS_SELECTOR, ".price, .product-price")
-            price_text = price_elem.text.strip()
-            match = re.search(r'(\d+\s?\d*)\s*₽', price_text)
-            if match:
-                price = int(match.group(1).replace(' ', ''))
-        except NoSuchElementException:
-            pass
+        for selector in [".price", ".product-price", ".cost", "[class*='price']"]:
+            try:
+                price_elem = card_element.find_element(By.CSS_SELECTOR, selector)
+                price_text = price_elem.text.strip()
+                match = re.search(r'(\d+\s?\d*)\s*₽', price_text)
+                if match:
+                    price = int(match.group(1).replace(' ', ''))
+                    break
+            except:
+                continue
         
+        # Изображение
         image_url = None
         try:
             img = card_element.find_element(By.TAG_NAME, "img")
-            image_url = img.get_attribute("data-src") or img.get_attribute("src") or img.get_attribute("data-lazy-src")
-            
+            for attr in ["data-src", "src", "data-lazy-src", "data-original"]:
+                image_url = img.get_attribute(attr)
+                if image_url:
+                    break
             if image_url:
                 if image_url.startswith("//"):
                     image_url = "https:" + image_url
                 elif not image_url.startswith("http"):
                     image_url = base_url + image_url
-        except NoSuchElementException:
+        except:
             pass
         
         if not image_url:
-            return None
+            return None  # Пропускаем без изображения
         
+        # Парсинг метаданных
         brand = None
         volume = None
         gender = None
@@ -82,6 +108,7 @@ def parse_product_card(card_element, base_url=BASE_URL):
         if gender_match:
             gender = gender_match.group(1).strip()
         
+        # Бренд: первые слова на латинице
         parts = name.split()
         brand_parts = []
         for part in parts:
@@ -108,41 +135,75 @@ def parse_product_card(card_element, base_url=BASE_URL):
         }
         
     except Exception as e:
-        print(f"⚠️ Ошибка парсинга: {e}")
+        print(f"⚠️ Ошибка парсинга карточки: {e}")
         return None
 
 
 def parse_catalog_page(driver, url):
-    """Парсинг страницы каталога."""
+    """Парсинг страницы каталога с ожиданием загрузки."""
     driver.get(url)
-    time.sleep(3)
     
+    # Ждём появления хотя бы одного элемента, похожего на товар
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/product/'], .product-item, .catalog-item"))
+        )
+    except TimeoutException:
+        print("⚠️ Таймаут загрузки страницы")
+        return []
+    
+    time.sleep(2)
+    
+    # Прокрутка для подгрузки изображений
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     time.sleep(2)
     
     products = []
     
+    # Универсальные селекторы для карточек
     selectors = [
-        "div.product-item",
-        "div.catalog-item",
-        "article.product",
-        ".products-grid > div, .catalog-grid > div"
+        "div.product-item", "div.catalog-item", "article.product",
+        ".products-grid > div", ".catalog-grid > div",
+        "div[data-product-id]", "div[class*='product']",
+        "a[href*='/product/']"  # Фоллбэк: прямые ссылки
     ]
     
     elements = []
     for selector in selectors:
         elements = driver.find_elements(By.CSS_SELECTOR, selector)
-        if elements:
+        if len(elements) > 0:
+            print(f"✅ Найдено по селектору '{selector}': {len(elements)}")
             break
     
-    print(f"📦 Найдено элементов: {len(elements)}")
+    if not elements:
+        print("⚠️ Не найдено элементов ни по одному селектору")
+        # Фоллбэк: ищем все ссылки на товары
+        elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
+        print(f"🔍 Фоллбэк: найдено ссылок на товары: {len(elements)}")
     
     for elem in elements:
-        product = parse_product_card(elem)
-        if product:
+        # Если элемент — это ссылка, ищем её контейнер
+        if elem.tag_name == "a":
+            container = elem.find_element(By.XPATH, "./ancestor::div[contains(@class, 'product') or contains(@class, 'item') or contains(@class, 'card')]") if elem else None
+            if container:
+                product = parse_product_card(container)
+            else:
+                product = parse_product_card(elem)
+        else:
+            product = parse_product_card(elem)
+        
+        if product and product.get("name") and len(product.get("name", "")) > 3:
             products.append(product)
     
-    return products
+    # Удаляем дубликаты по URL
+    seen_urls = set()
+    unique_products = []
+    for p in products:
+        if p.get("product_url") and p["product_url"] not in seen_urls:
+            seen_urls.add(p["product_url"])
+            unique_products.append(p)
+    
+    return unique_products
 
 
 def save_json(data, filepath):
@@ -170,13 +231,13 @@ def main():
             if page > 1:
                 url = f"{args.url}?page={page}"
             
-            print(f"\n📄 Страница {page}/{args.pages}")
+            print(f"\n📄 Страница {page}/{args.pages}: {url}")
             products = parse_catalog_page(driver, url)
+            print(f"✅ Добавлено товаров: {len(products)}")
             all_products.extend(products)
-            print(f"✅ Добавлено: {len(products)} товаров")
             
             if page < args.pages:
-                time.sleep(2)
+                time.sleep(3)
                 
     finally:
         driver.quit()
