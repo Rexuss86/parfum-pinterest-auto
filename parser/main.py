@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Парсер DNK Parfum — обновлённая версия с универсальными селекторами
+Парсер DNK Parfum — версия с улучшенной маскировкой и таймаутами
 """
 
 import time
 import json
 import re
 import argparse
+import random
 from pathlib import Path
 from datetime import datetime
 from selenium import webdriver
@@ -21,28 +22,55 @@ import hashlib
 BASE_URL = "https://dnkparfum.ru"
 OUTPUT_DIR = Path("data")
 
+# 🔑 Увеличенные таймауты
+PAGE_LOAD_TIMEOUT = 45  # секунд
+ELEMENT_WAIT_TIMEOUT = 20  # секунд
+SCROLL_WAIT = 3  # секунд
+
 
 def get_driver():
-    """Headless Chrome driver с улучшенной маскировкой."""
+    """Headless Chrome driver с максимальной маскировкой."""
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")  # Новый режим headless
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    options.add_argument("--disable-web-security")
+    options.add_argument("--allow-running-insecure-content")
+    
+    # 🔑 Реалистичный User-Agent
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ]
+    options.add_argument(f"user-agent={random.choice(user_agents)}")
+    
+    # 🔑 Дополнительные параметры для обхода детекции
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     
     driver = webdriver.Chrome(options=options)
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
+    # 🔑 Скрипты для маскировки
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru', 'en']});
+        """
+    })
+    
     return driver
 
 
 def parse_product_card(card_element, base_url=BASE_URL):
     """Извлечение данных из карточки товара."""
     try:
-        # Название и ссылка (универсальный поиск)
+        # Название и ссылка
         title_elem = None
         for selector in [
-            "a.product-title", ".product-name a", ".title a", 
+            "a.product-title", ".product-name a", ".title a",
             "a[href*='/product/']", "a[href*='/catalog/']"
         ]:
             try:
@@ -53,7 +81,6 @@ def parse_product_card(card_element, base_url=BASE_URL):
                 continue
         
         if not title_elem:
-            # Фоллбэк: ищем любой текст, похожий на название
             name = card_element.text.strip().split('\n')[0][:100]
             product_url = None
         else:
@@ -93,9 +120,9 @@ def parse_product_card(card_element, base_url=BASE_URL):
             pass
         
         if not image_url:
-            return None  # Пропускаем без изображения
+            return None
         
-        # Парсинг метаданных
+        # Метаданные
         brand = None
         volume = None
         gender = None
@@ -108,7 +135,6 @@ def parse_product_card(card_element, base_url=BASE_URL):
         if gender_match:
             gender = gender_match.group(1).strip()
         
-        # Бренд: первые слова на латинице
         parts = name.split()
         brand_parts = []
         for part in parts:
@@ -140,32 +166,39 @@ def parse_product_card(card_element, base_url=BASE_URL):
 
 
 def parse_catalog_page(driver, url):
-    """Парсинг страницы каталога с ожиданием загрузки."""
-    driver.get(url)
-    
-    # Ждём появления хотя бы одного элемента, похожего на товар
+    """Парсинг страницы каталога с улучшенной обработкой."""
     try:
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/product/'], .product-item, .catalog-item"))
-        )
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
+        driver.get(url)
     except TimeoutException:
-        print("⚠️ Таймаут загрузки страницы")
+        print(f"⚠️ Таймаут загрузки страницы {url}")
         return []
     
-    time.sleep(2)
+    # 🔑 Ждём появления элементов с увеличенным таймаутом
+    try:
+        WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/product/'], .product-item, .catalog-item, img"))
+        )
+    except TimeoutException:
+        print("⚠️ Не найдено товаров после ожидания")
+        # Попробуем просто подождать и взять то, что есть
+        time.sleep(5)
     
-    # Прокрутка для подгрузки изображений
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(2)
+    time.sleep(SCROLL_WAIT)
+    
+    # 🔑 Несколько прокруток для подгрузки всего контента
+    for _ in range(2):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
     
     products = []
     
-    # Универсальные селекторы для карточек
+    # Универсальные селекторы
     selectors = [
         "div.product-item", "div.catalog-item", "article.product",
         ".products-grid > div", ".catalog-grid > div",
         "div[data-product-id]", "div[class*='product']",
-        "a[href*='/product/']"  # Фоллбэк: прямые ссылки
+        "a[href*='/product/']"
     ]
     
     elements = []
@@ -177,17 +210,15 @@ def parse_catalog_page(driver, url):
     
     if not elements:
         print("⚠️ Не найдено элементов ни по одному селектору")
-        # Фоллбэк: ищем все ссылки на товары
         elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
-        print(f"🔍 Фоллбэк: найдено ссылок на товары: {len(elements)}")
+        print(f"🔍 Фоллбэк: найдено ссылок: {len(elements)}")
     
     for elem in elements:
-        # Если элемент — это ссылка, ищем её контейнер
         if elem.tag_name == "a":
-            container = elem.find_element(By.XPATH, "./ancestor::div[contains(@class, 'product') or contains(@class, 'item') or contains(@class, 'card')]") if elem else None
-            if container:
+            try:
+                container = elem.find_element(By.XPATH, "./ancestor::div[contains(@class, 'product') or contains(@class, 'item')]")
                 product = parse_product_card(container)
-            else:
+            except:
                 product = parse_product_card(elem)
         else:
             product = parse_product_card(elem)
@@ -195,7 +226,7 @@ def parse_catalog_page(driver, url):
         if product and product.get("name") and len(product.get("name", "")) > 3:
             products.append(product)
     
-    # Удаляем дубликаты по URL
+    # Удаляем дубликаты
     seen_urls = set()
     unique_products = []
     for p in products:
@@ -237,7 +268,7 @@ def main():
             all_products.extend(products)
             
             if page < args.pages:
-                time.sleep(3)
+                time.sleep(random.uniform(3, 6))  # 🔑 Случайная задержка
                 
     finally:
         driver.quit()
